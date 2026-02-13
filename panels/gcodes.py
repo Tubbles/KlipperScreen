@@ -74,7 +74,8 @@ class Panel(ScreenPanel):
         logging.info(f"Thumbsize: {self.thumbsize:.1f}")
 
         self.flowbox = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE,
-                                   column_spacing=0, row_spacing=0)
+                                   column_spacing=0, row_spacing=0,
+                                   homogeneous=True)
         list_mode = self._config.get_main_config().get("print_view", 'thumbs')
         logging.info(list_mode)
         self.list_mode = list_mode == 'list'
@@ -139,11 +140,11 @@ class Panel(ScreenPanel):
         else:
             logging.error(f"Unknown item {item}")
             return
-        basename = os.path.splitext(name)[0]
+        display_name = name if 'filename' in item else os.path.splitext(name)[0]
         fbchild.set_path(path)
-        fbchild.set_name(basename.casefold())
+        fbchild.set_name(name.casefold())
         if self.list_mode:
-            label = Gtk.Label(label=basename, hexpand=True, vexpand=False)
+            label = Gtk.Label(label=display_name, hexpand=True, vexpand=False)
             format_label(label)
             info = Gtk.Label(
                 hexpand=True, halign=Gtk.Align.START, xalign=0,
@@ -159,7 +160,7 @@ class Panel(ScreenPanel):
             rename.set_image(self._gtk.Image("files", self.list_button_size, self.list_button_size))
             itemname = Gtk.Label(hexpand=True, halign=Gtk.Align.START, ellipsize=Pango.EllipsizeMode.END)
             itemname.get_style_context().add_class("print-filename")
-            itemname.set_markup(f"<big><b>{basename}</b></big>")
+            itemname.set_markup(f"<big><b>{display_name}</b></big>")
             icon = Gtk.Button()
             row = Gtk.Grid(hexpand=True, vexpand=False, valign=Gtk.Align.CENTER)
             row.get_style_context().add_class("frame-item")
@@ -204,7 +205,7 @@ class Panel(ScreenPanel):
                 return
             fbchild.add(row)
         else:  # Thumbnail view
-            icon = self._gtk.Button(label=basename)
+            icon = self._gtk.Button(label=display_name)
             if 'filename' in item:
                 if KlippyFiles.is_gcode(name):
                     icon.connect("clicked", self.confirm_print, path)
