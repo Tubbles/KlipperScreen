@@ -383,15 +383,73 @@ class Panel(ScreenPanel):
     def open_file(self, widget, path, item):
         name = os.path.basename(path)
         if KlippyFiles.is_text(name):
-            self._screen.show_panel(
-                "file_viewer", title=name,
-                panel_name=f"file_viewer_{path}", filename=path,
-            )
+            self.show_text_file(name, path)
         else:
-            self._screen.show_panel(
-                "file_info", title=name,
-                panel_name=f"file_info_{path}", filename=path, item=item,
-            )
+            self.show_file_info(name, item)
+
+    def show_text_file(self, name, path):
+        max_size = 1024 * 1024
+        response = self._screen.apiclient.send_request(
+            f"server/files/gcodes/{path}", json=False,
+        )
+        if not response:
+            text = _("Error loading file")
+        else:
+            truncated = len(response) > max_size
+            data = response[:max_size] if truncated else response
+            try:
+                text = data.decode("utf-8")
+            except (UnicodeDecodeError, AttributeError):
+                try:
+                    text = data.decode("latin-1")
+                except Exception:
+                    text = _("Unable to decode file content")
+            if truncated:
+                text += f"\n\n[{_('File truncated')} — 1 MB {_('limit')}]"
+
+        tb = Gtk.TextBuffer()
+        tb.set_text(text)
+        tv = Gtk.TextView(
+            buffer=tb, editable=False, cursor_visible=False,
+            monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR,
+        )
+        sw = Gtk.ScrolledWindow(hexpand=True, vexpand=True)
+        sw.add(tv)
+
+        buttons = [
+            {"name": _("Close"), "response": Gtk.ResponseType.CANCEL, "style": "dialog-secondary"},
+        ]
+        self._gtk.Dialog(name, buttons, sw, self.close_file_dialog)
+
+    def show_file_info(self, name, item):
+        ext = os.path.splitext(name)[1]
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=10,
+            halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER,
+            vexpand=True, hexpand=True,
+        )
+        name_label = Gtk.Label()
+        name_label.set_markup(f"<big><b>{name}</b></big>")
+        name_label.set_line_wrap(True)
+        box.add(name_label)
+        if "size" in item:
+            box.add(Gtk.Label(label=f"{_('Size')}: {self.format_size(item['size'])}"))
+        if "modified" in item:
+            if self.time_24:
+                date_str = f"{datetime.fromtimestamp(item['modified']):%Y/%m/%d %H:%M}"
+            else:
+                date_str = f"{datetime.fromtimestamp(item['modified']):%Y/%m/%d %I:%M %p}"
+            box.add(Gtk.Label(label=f"{_('Modified')}: {date_str}"))
+        if ext:
+            box.add(Gtk.Label(label=f"{_('Type')}: {ext}"))
+
+        buttons = [
+            {"name": _("Close"), "response": Gtk.ResponseType.CANCEL, "style": "dialog-secondary"},
+        ]
+        self._gtk.Dialog(name, buttons, box, self.close_file_dialog)
+
+    def close_file_dialog(self, dialog, response_id):
+        self._gtk.remove_dialog(dialog)
 
     def get_info_str(self, item, path):
         info = ""
