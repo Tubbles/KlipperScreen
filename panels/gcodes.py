@@ -8,6 +8,7 @@ from gi.repository import Gtk, Pango
 from datetime import datetime
 from ks_includes.screen_panel import ScreenPanel
 from ks_includes.KlippyGtk import find_widget
+from ks_includes.files import KlippyFiles
 from ks_includes.widgets.flowboxchild_extended import PrintListItem
 
 
@@ -129,8 +130,7 @@ class Panel(ScreenPanel):
             path = f"{self.cur_directory}/{name}"
             fbchild.set_as_dir(True)
         elif 'filename' in item:
-            if (item['filename'].startswith(".") or
-                    os.path.splitext(item['filename'])[1] not in {'.gcode', '.gco', '.g'}):
+            if item['filename'].startswith("."):
                 return
             name = item['filename']
             path = f"{self.cur_directory}/{name}"
@@ -169,21 +169,25 @@ class Panel(ScreenPanel):
             row.attach(rename, 2, 1, 1, 1)
             row.attach(delete, 3, 1, 1, 1)
             if 'filename' in item:
-                icon.connect("clicked", self.confirm_print, path)
-                image_args = (path, icon, self.thumbsize / 2, True, "file")
                 delete.connect("clicked", self.confirm_delete_file, f"gcodes/{path}")
                 rename.connect("clicked", self.show_rename, f"gcodes/{path}")
-                action_icon = "printer" if self._printer.extrudercount > 0 else "load"
-                action = self._gtk.Button(action_icon, style="color3")
-                action.connect("clicked", self.confirm_print, path)
-                action.set_hexpand(False)
-                action.set_vexpand(False)
-                action.set_halign(Gtk.Align.END)
-                if self._screen.width >= 400:
-                    row.attach(action, 4, 0, 1, 2)
+                if KlippyFiles.is_gcode(name):
+                    icon.connect("clicked", self.confirm_print, path)
+                    image_args = (path, icon, self.thumbsize / 2, True, "file")
+                    action_icon = "printer" if self._printer.extrudercount > 0 else "load"
+                    action = self._gtk.Button(action_icon, style="color3")
+                    action.connect("clicked", self.confirm_print, path)
+                    action.set_hexpand(False)
+                    action.set_vexpand(False)
+                    action.set_halign(Gtk.Align.END)
+                    if self._screen.width >= 400:
+                        row.attach(action, 4, 0, 1, 2)
+                    else:
+                        icon.get_style_context().add_class("color3")
+                        row.attach(icon, 4, 0, 1, 2)
                 else:
-                    icon.get_style_context().add_class("color3")
-                    row.attach(icon, 4, 0, 1, 2)
+                    icon.connect("clicked", self.open_file, path, item)
+                    image_args = (None, icon, self.thumbsize / 2, True, "file")
             elif 'dirname' in item:
                 icon.connect("clicked", self.change_dir, path)
                 image_args = (None, icon, self.thumbsize / 2, True, "folder")
@@ -201,8 +205,12 @@ class Panel(ScreenPanel):
         else:  # Thumbnail view
             icon = self._gtk.Button(label=basename)
             if 'filename' in item:
-                icon.connect("clicked", self.confirm_print, path)
-                image_args = (path, icon, self.thumbsize, False, "file")
+                if KlippyFiles.is_gcode(name):
+                    icon.connect("clicked", self.confirm_print, path)
+                    image_args = (path, icon, self.thumbsize, False, "file")
+                else:
+                    icon.connect("clicked", self.open_file, path, item)
+                    image_args = (None, icon, self.thumbsize, False, "file")
             elif 'dirname' in item:
                 icon.connect("clicked", self.change_dir, path)
                 image_args = (None, icon, self.thumbsize, False, "folder")
@@ -370,6 +378,19 @@ class Panel(ScreenPanel):
             self._screen._ws.klippy.print_start(filename)
         elif response_id == Gtk.ResponseType.REJECT:
             self.confirm_delete_file(None, f"gcodes/{filename}")
+
+    def open_file(self, widget, path, item):
+        name = os.path.basename(path)
+        if KlippyFiles.is_text(name):
+            self._screen.show_panel(
+                "file_viewer", title=name,
+                panel_name=f"file_viewer_{path}", filename=path,
+            )
+        else:
+            self._screen.show_panel(
+                "file_info", title=name,
+                panel_name=f"file_info_{path}", filename=path, item=item,
+            )
 
     def get_info_str(self, item, path):
         info = ""

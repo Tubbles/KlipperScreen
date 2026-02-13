@@ -84,10 +84,7 @@ class KlippyFiles:
         logging.info(f"callback not found {callback}")
 
     def process_update(self, data):
-        if (
-            'item' in data and data['item']['root'] != 'gcodes'
-            or data['action'].endswith("file") and not self.is_gcode(data['item']['path'])
-        ):
+        if 'item' in data and data['item']['root'] != 'gcodes':
             return
         if data['action'] == "create_file":
             self.add_file(data['item'])
@@ -103,6 +100,13 @@ class KlippyFiles:
     @staticmethod
     def is_gcode(path):
         return os.path.splitext(path)[1] in {'.gcode', '.gco', '.g'}
+
+    @staticmethod
+    def is_text(path):
+        return os.path.splitext(path)[1] in {
+            '.txt', '.cfg', '.conf', '.log', '.md', '.csv',
+            '.sh', '.json', '.xml', '.yaml', '.yml',
+        }
 
     def file_metadata_exists(self, filename):
         return filename in self.files and "slicer" in self.files[filename]
