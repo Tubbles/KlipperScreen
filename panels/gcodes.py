@@ -12,13 +12,14 @@ from ks_includes.files import KlippyFiles
 from ks_includes.widgets.flowboxchild_extended import PrintListItem
 
 
-def format_label(widget):
+def format_label(widget, max_width_chars=10):
     label = find_widget(widget, Gtk.Label)
     if label is not None:
         label.set_line_wrap_mode(Pango.WrapMode.CHAR)
         label.set_line_wrap(True)
         label.set_ellipsize(Pango.EllipsizeMode.END)
         label.set_lines(3)
+        label.set_max_width_chars(max_width_chars)
 
 
 class Panel(ScreenPanel):
