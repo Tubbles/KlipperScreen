@@ -12,14 +12,13 @@ from ks_includes.files import KlippyFiles
 from ks_includes.widgets.flowboxchild_extended import PrintListItem
 
 
-def format_label(widget, max_width_chars=10):
+def format_label(widget):
     label = find_widget(widget, Gtk.Label)
     if label is not None:
         label.set_line_wrap_mode(Pango.WrapMode.CHAR)
         label.set_line_wrap(True)
         label.set_ellipsize(Pango.EllipsizeMode.END)
         label.set_lines(3)
-        label.set_max_width_chars(max_width_chars)
 
 
 class Panel(ScreenPanel):
@@ -78,8 +77,7 @@ class Panel(ScreenPanel):
         logging.info(f"Thumbsize: {self.thumbsize:.1f}")
 
         self.flowbox = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE,
-                                   column_spacing=0, row_spacing=0,
-                                   homogeneous=True)
+                                   column_spacing=0, row_spacing=0)
         list_mode = self._config.get_main_config().get("print_view", 'thumbs')
         logging.info(list_mode)
         self.list_mode = list_mode == 'list'
@@ -92,7 +90,6 @@ class Panel(ScreenPanel):
             self.flowbox.set_max_children_per_line(columns)
 
         self.scroll = self._gtk.ScrolledWindow()
-        self.scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.scroll.add(self.flowbox)
 
         self.main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
