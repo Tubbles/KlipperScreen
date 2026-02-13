@@ -23,8 +23,15 @@ class Panel(ScreenPanel):
         sw = Gtk.ScrolledWindow(hexpand=True, vexpand=True)
         sw.add(tv)
 
+        close = self._gtk.Button("cancel", _("Close"), "color2")
+        close.connect("clicked", self.close_panel)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.pack_start(sw, True, True, 0)
+        box.pack_end(close, False, False, 0)
+
         self.labels['tb'] = tb
-        self.content.add(sw)
+        self.content.add(box)
         self.fetch_content()
 
     def fetch_content(self):
@@ -51,3 +58,6 @@ class Panel(ScreenPanel):
         if truncated:
             text += f"\n\n[{_('File truncated')} — 1 MB {_('limit')}]"
         self.labels['tb'].set_text(text)
+
+    def close_panel(self, widget=None):
+        self._screen._menu_go_back()

@@ -42,4 +42,11 @@ class Panel(ScreenPanel):
         if ext:
             box.add(Gtk.Label(label=f"{_('Type')}: {ext}"))
 
+        close = self._gtk.Button("cancel", _("Close"), "color2")
+        close.connect("clicked", self.close_panel)
+        box.add(close)
+
         self.content.add(box)
+
+    def close_panel(self, widget=None):
+        self._screen._menu_go_back()
