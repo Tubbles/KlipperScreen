@@ -93,8 +93,12 @@ class KlippyFiles:
         elif data['action'] == "modify_file":
             self.request_metadata(data['item']['path'])
         elif data['action'] == "move_file":
-            self.files[data['item']['path']] = self.files.pop(data['source_item']['path'])
+            # Files moved into place by atomic rename (e.g. syncthing's .syncthing.*.tmp
+            # sync temporaries) have a source that was never tracked or carries no metadata
+            self.files[data['item']['path']] = self.files.pop(data['source_item']['path'], {})
             self.files[data['item']['path']].update(data['item'])
+            if not self.file_metadata_exists(data['item']['path']):
+                self.request_metadata(data['item']['path'])
         self.run_callbacks(data['action'], data)
 
     @staticmethod
