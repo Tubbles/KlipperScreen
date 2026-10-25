@@ -19,6 +19,13 @@ def force_move_enabled(force_move_section):
     return configparser.RawConfigParser.BOOLEAN_STATES.get(value, False)
 
 
+def set_style_class(widget, name, enabled):
+    if enabled:
+        widget.get_style_context().add_class(name)
+    else:
+        widget.get_style_context().remove_class(name)
+
+
 class Panel(ScreenPanel):
     distances = [".1", ".5", "1", "5", "10", "25", "50"]
     distance = distances[-2]
@@ -36,6 +43,7 @@ class Panel(ScreenPanel):
                     self.distance = self.distances[-2]
 
         self.settings = {}
+        self.force_move_armed = False
         self.menu.append("move_menu")
         self.buttons = {
             "x+": self._gtk.Button("arrow-right", "X+", "color1"),
@@ -138,7 +146,14 @@ class Panel(ScreenPanel):
             self.labels[p].set_vexpand(True)
             self.labels[p].connect("clicked", self.menu_item_clicked, {"panel": "move_advanced"})
             self.labels[p].get_style_context().add_class("no-margin")
-        self.labels["move_dist"] = Gtk.Label(label=_("Move Distance (mm)"))
+        self.labels["move_dist"] = Gtk.Label(label=_("Move Distance (mm)"), hexpand=True)
+        self.buttons["force_move"] = self.force_move_button()
+        dist_row = Gtk.Box()
+        dist_row.add(self.labels["move_dist"])
+        # Alone in its box the toggle is first and last child, so it gets both rounded ends
+        force_move_box = Gtk.Box()
+        force_move_box.add(self.buttons["force_move"])
+        dist_row.add(force_move_box)
 
         bottomgrid = Gtk.Grid(column_homogeneous=True)
         bottomgrid.set_row_spacing(0)
@@ -147,7 +162,7 @@ class Panel(ScreenPanel):
         bottomgrid.attach(self.labels["pos_x"], 0, 0, 1, 1)
         bottomgrid.attach(self.labels["pos_y"], 1, 0, 1, 1)
         bottomgrid.attach(self.labels["pos_z"], 2, 0, 1, 1)
-        bottomgrid.attach(self.labels["move_dist"], 0, 1, 3, 1)
+        bottomgrid.attach(dist_row, 0, 1, 3, 1)
         if not self._screen.vertical_mode:
             bottomgrid.attach(adjust, 3, 0, 1, 2)
 
@@ -271,6 +286,12 @@ class Panel(ScreenPanel):
                     self.labels[f"pos_{axis}"].set_label(
                         f"{axis.upper()}: {data['gcode_move']['gcode_position'][i]:.2f}"
                     )
+        if "toolhead" in data and "homed_axes" in data["toolhead"]:
+            self.update_force_move()
+
+    def deactivate(self):
+        self.force_move_armed = False
+        self.show_force_move_state(())
 
     def change_distance(self, widget, distance):
         logging.info(f"### Distance {distance}")
@@ -293,7 +314,7 @@ class Panel(ScreenPanel):
         if speed is None:
             speed = self._config.get_config()["main"].getint(config_key, self.max_z_velocity)
         speed = max(1, speed)
-        if self.can_force_move(axis):
+        if self.force_move_armed and self.can_force_move(axis):
             self.force_move(widget, axis, dist, speed)
             return
         script = f"{KlippyGcodes.MOVE_RELATIVE}\nG0 {axis}{dist} F{60 * speed}"
@@ -303,13 +324,50 @@ class Panel(ScreenPanel):
 
     def can_force_move(self, axis):
         # FORCE_MOVE neither checks nor updates the toolhead position, so only an
-        # unhomed axis may use it, and only where it moves the one stepper of that axis
+        # unhomed axis may use it
+        homed_axes = self._printer.get_stat("toolhead", "homed_axes")
+        return axis not in homed_axes and self.force_move_configured(axis)
+
+    def force_move_configured(self, axis):
+        # Only where FORCE_MOVE moves the one stepper of that axis
         return (
-            axis not in self._printer.get_stat("toolhead", "homed_axes")
-            and force_move_enabled(self._printer.get_config_section("force_move"))
+            force_move_enabled(self._printer.get_config_section("force_move"))
             and self._printer.get_config_section("printer")["kinematics"] == "cartesian"
             and not self.has_second_stepper(axis)
         )
+
+    def force_move_button(self):
+        button = self._gtk.Button(
+            "warning", " " + _("Unhomed moves"), None, self.bts, Gtk.PositionType.LEFT, 1
+        )
+        button.set_hexpand(False)
+        # update_force_move decides the visibility, the show_all of the panel must not
+        button.set_no_show_all(True)
+        button.get_style_context().add_class("horizontal_togglebuttons")
+        button.get_style_context().add_class("horizontal_togglebuttons_smaller")
+        button.connect("clicked", self.toggle_force_move)
+        return button
+
+    def toggle_force_move(self, widget):
+        self.force_move_armed = not self.force_move_armed
+        self.update_force_move()
+
+    def update_force_move(self):
+        configured = [axis for axis in "xyz" if self.force_move_configured(axis)]
+        movable = [axis for axis in configured if self.can_force_move(axis)]
+        self.force_move_armed = self.force_move_armed and bool(movable)
+        self.buttons["force_move"].set_visible(bool(configured))
+        self.buttons["force_move"].set_sensitive(bool(movable))
+        self.show_force_move_state(movable)
+
+    def show_force_move_state(self, movable):
+        armed = self.force_move_armed
+        set_style_class(self.buttons["force_move"], "horizontal_togglebuttons_active", armed)
+        # invalid is the alert style of a button, and every theme defines it
+        for axis in "xyz":
+            for direction in "+-":
+                button = self.buttons[f"{axis}{direction}"]
+                set_style_class(button, "invalid", armed and axis in movable)
 
     def has_second_stepper(self, axis):
         dual_carriage = self._printer.get_config_section("dual_carriage") or {}

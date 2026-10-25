@@ -78,10 +78,14 @@ panel: move
 ```
 ![Move Panel](img/panels/move.png)
 !!! note
-    An axis that is not homed moves with `FORCE_MOVE` when Klipper's `[force_move]` section sets
+    An axis that is not homed can move with `FORCE_MOVE` when Klipper's `[force_move]` section sets
     `enable_force_move: True`, the kinematics are `cartesian` and one stepper drives the axis alone
-    (no `stepper_z1`, `stepper_x1` and so on, no `dual_carriage` on it). `FORCE_MOVE` ignores the axis
-    limits, and is refused while Klipper is busy, for example homing. Homed axes always use normal moves.
+    (no `stepper_z1`, `stepper_x1` and so on, no `dual_carriage` on it). The panel then shows an
+    Unhomed moves button. While it is active, the arrows of the unhomed axes are highlighted and move
+    with `FORCE_MOVE`. It turns off when tapped again, when leaving the panel, and once no such axis
+    is left unhomed. Otherwise the arrows send normal moves, which Klipper refuses on an unhomed axis.
+    `FORCE_MOVE` ignores the axis limits, and is refused while Klipper is busy, for example homing.
+    Homed axes always use normal moves.
 
 ### [Model Viewer](Panels/Model_viewer.md)
 
