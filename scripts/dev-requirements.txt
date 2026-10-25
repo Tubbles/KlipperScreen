@@ -1,3 +1,4 @@
 pre-commit
 ruff
+pytest
 pygobject-stubs --config-settings=config=Gtk3,Gdk3

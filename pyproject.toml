@@ -30,3 +30,7 @@ known-first-party = ["ks_includes", "panels"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

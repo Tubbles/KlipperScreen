@@ -26,6 +26,12 @@ pip install -r scripts/KlipperScreen-requirements.txt
 # this one is optional:
 pip install -r scripts/dev-requirements.txt
 ```
+## Run the tests
+The tests cover the pure helper modules and need only numpy and pytest:
+```bash
+python -m pytest
+```
+
 # Set configurations
 Create klipperscreen.conf and place it on the repo folder
 ```
