@@ -100,6 +100,13 @@ def bounds_of(points):
     return np.array([points.min(axis=0), points.max(axis=0)], dtype=np.float64)
 
 
+def progress_fraction(done, total):
+    """Share of the work done, from 0 to 1. An empty total counts as finished."""
+    if total <= 0:
+        return 1.0
+    return min(max(done / total, 0.0), 1.0)
+
+
 def line_chunks(data, size=CHUNK_BYTES):
     """Pieces of data of at least size bytes (except the last) that end at a line break."""
     start = 0
@@ -272,15 +279,17 @@ def layer_pieces(chunk):
     return [chunk[start:end] for start, end in zip(bounds, bounds[1:])]
 
 
-def interpret_gcode(data, cancelled=lambda: False):
+def interpret_gcode(data, cancelled=lambda: False, progress=lambda done, total: None):
     """Moves and layer change comments.
 
     Returns a (rows, 4) array of x, y, z and extruded length after each move or G92, from the
     origin, and the number of rows before each layer change comment.
+    progress(bytes done, total bytes) is called after each chunk.
     """
     state = MotionState()
     moves = array("d")
     marker_rows = []
+    done = 0
     for chunk in line_chunks(data):
         if cancelled():
             raise Cancelled()
@@ -289,6 +298,8 @@ def interpret_gcode(data, cancelled=lambda: False):
         for piece in marked:
             marker_rows.append(len(moves) // 4)
             interpret_lines(motion_lines(piece), state, moves)
+        done += len(chunk)
+        progress(done, len(data))
     rows = np.frombuffer(moves, dtype=np.float64).reshape(-1, 4)
     return rows, np.array(marker_rows, dtype=np.int64)
 
@@ -382,9 +393,12 @@ def toolpath_from_segments(segments, first_segments):
     return Toolpath(vertices, indices, ends, heights, bounds_of(vertices), focus)
 
 
-def parse_gcode(data, cancelled=lambda: False):
-    """Toolpath of the extrusion moves. cancelled is polled between chunks of the file."""
-    moves, marker_rows = interpret_gcode(data, cancelled)
+def parse_gcode(data, cancelled=lambda: False, progress=lambda done, total: None):
+    """Toolpath of the extrusion moves.
+
+    cancelled is polled and progress(bytes done, total bytes) called between chunks of the file.
+    """
+    moves, marker_rows = interpret_gcode(data, cancelled, progress)
     segments, segment_rows = extrusion_segments(moves)
     if len(segments) == 0:
         raise ValueError("G-code file has no extrusion moves")

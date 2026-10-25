@@ -1,6 +1,8 @@
+import functools
 import logging
 import os
 import threading
+import time
 
 import gi
 
@@ -16,6 +18,8 @@ DOWNLOAD_TIMEOUT = 30
 # Parsing a large G-code file keeps a core busy for seconds.
 # A higher niceness lets Klipper go first.
 WORKER_NICENESS = 10
+# Seconds between parsing progress updates sent to the main loop.
+PROGRESS_INTERVAL = 0.2
 
 
 def lower_thread_priority():
@@ -25,10 +29,29 @@ def lower_thread_priority():
         logging.debug(f"Unable to lower the model loading priority: {error}")
 
 
-def parse_model(path, data, bed, cancelled):
+def parse_model(path, data, bed, cancelled, progress):
     if KlippyFiles.is_stl(path):
         return model_geometry.parse_stl(data, model_geometry.bed_center(bed))
-    return model_geometry.parse_gcode(data, cancelled)
+    return model_geometry.parse_gcode(data, cancelled, progress)
+
+
+def throttled(callback, interval):
+    """callback, minus the calls that come within interval seconds of the last one passed on."""
+    last_call = None
+
+    def call(*arguments):
+        nonlocal last_call
+        now = time.monotonic()
+        if last_call is not None and now - last_call < interval:
+            return
+        last_call = now
+        callback(*arguments)
+
+    return call
+
+
+def parsing_text(fraction):
+    return f"{_('Parsing')} {fraction:.0%}"
 
 
 def layer_text(layer, count, height):
@@ -59,6 +82,10 @@ class Panel(ScreenPanel):
             valign=Gtk.Align.CENTER,
         )
         self.status.set_no_show_all(True)
+        size = self._gtk.img_scale * self._gtk.button_image_scale
+        self.spinner = Gtk.Spinner(width_request=size, height_request=size)
+        self.progress = Gtk.ProgressBar(show_text=True, width_request=self._screen.width // 2)
+        self.loading_box = self.create_loading_box()
         self.layer_label = Gtk.Label(justify=Gtk.Justification.CENTER)
         self.layer_scale = self.create_layer_scale()
         self.slider_box = self.create_slider_box()
@@ -90,9 +117,24 @@ class Panel(ScreenPanel):
         box.hide()
         return box
 
+    def create_loading_box(self):
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=10,
+            halign=Gtk.Align.CENTER,
+            valign=Gtk.Align.CENTER,
+        )
+        box.pack_start(self.spinner, False, False, 0)
+        box.pack_start(self.progress, False, False, 0)
+        box.show_all()
+        box.set_no_show_all(True)
+        box.hide()
+        return box
+
     def create_layout(self):
         overlay = Gtk.Overlay()
         overlay.add(self.view)
+        overlay.add_overlay(self.loading_box)
         overlay.add_overlay(self.status)
         orientation = (
             Gtk.Orientation.VERTICAL if self._screen.vertical_mode else Gtk.Orientation.HORIZONTAL
@@ -124,6 +166,7 @@ class Panel(ScreenPanel):
         self.generation += 1
         self.cancel_event.set()
         self.view.clear()
+        self.hide_loading()
         self.slider_box.hide()
 
     def bed_bounds(self):
@@ -136,10 +179,26 @@ class Panel(ScreenPanel):
         self.status.set_text(text)
         self.status.show()
 
+    def show_loading(self, text, fraction):
+        self.progress.set_text(text)
+        self.progress.set_fraction(fraction)
+        self.spinner.start()
+        self.loading_box.show()
+
+    def hide_loading(self):
+        self.spinner.stop()
+        self.loading_box.hide()
+
+    def show_progress(self, generation, text, fraction):
+        if generation == self.generation:
+            self.show_loading(text, fraction)
+        return False
+
     def start_loading(self):
         self.generation += 1
         self.cancel_event = threading.Event()
-        self.show_status(_("Loading..."))
+        self.status.hide()
+        self.show_loading(_("Downloading"), 0.0)
         arguments = (self.generation, self.path, self.bed_bounds(), self.cancel_event)
         threading.Thread(target=self.load, args=arguments, daemon=True).start()
 
@@ -150,8 +209,10 @@ class Panel(ScreenPanel):
         if data is None:
             GLib.idle_add(self.show_failure, generation, _("Error loading file"))
             return
+        GLib.idle_add(self.show_progress, generation, _("Parsing"), 0.0)
+        progress = throttled(functools.partial(self.report_parsing, generation), PROGRESS_INTERVAL)
         try:
-            model = parse_model(path, data, bed, cancel_event.is_set)
+            model = parse_model(path, data, bed, cancel_event.is_set, progress)
         except model_geometry.Cancelled:
             return
         except Exception as error:
@@ -162,15 +223,21 @@ class Panel(ScreenPanel):
             return
         GLib.idle_add(self.show_loaded, generation, model, bed)
 
+    def report_parsing(self, generation, done, total):
+        """Worker thread: hand the parsing progress to the main loop."""
+        fraction = model_geometry.progress_fraction(done, total)
+        GLib.idle_add(self.show_progress, generation, parsing_text(fraction), fraction)
+
     def show_failure(self, generation, text):
         if generation == self.generation:
+            self.hide_loading()
             self.show_status(text)
         return False
 
     def show_loaded(self, generation, model, bed):
         if generation != self.generation:
             return False
-        self.status.hide()
+        self.hide_loading()
         self.view.show_model(model, bed)
         self.setup_layer_slider(model)
         return False

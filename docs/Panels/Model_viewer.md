@@ -40,5 +40,5 @@ When the limits are not available, the outline follows the model.
 ## Limitations
 
 * Arcs (G2, G3) are drawn as a straight line from start to end.
-* Large G-code files take a while to load: about 11 seconds for a 49 MB file on a Raspberry Pi 4.
+* Large G-code files take a while to load: about 11 seconds for a 49 MB file on a Raspberry Pi 4. A progress bar shows how far parsing has come.
 * Only tested on X11.

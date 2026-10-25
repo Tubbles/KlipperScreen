@@ -314,3 +314,24 @@ class TestChunks:
         geometry.interpret_lines([b"M83", b"G91", b"G1 X5 Z0.2"], state, moves)
         geometry.interpret_lines([b"G1 X10 E1"], state, moves)
         assert list(moves[-4:]) == pytest.approx([15, 0, 0.2, 1])
+
+
+class TestProgress:
+    @pytest.mark.parametrize(
+        "done, total, fraction", [(0, 10, 0.0), (5, 10, 0.5), (10, 10, 1.0), (12, 10, 1.0)]
+    )
+    def test_fraction_is_clamped_share_of_total(self, done, total, fraction):
+        assert geometry.progress_fraction(done, total) == fraction
+
+    def test_empty_total_counts_as_finished(self):
+        assert geometry.progress_fraction(0, 0) == 1.0
+
+    def test_gcode_parse_reports_bytes_after_each_chunk(self):
+        filler = b"; a comment line that the parser skips quickly\n" * 50000
+        data = b"G1 Z0.2\nG1 X10 E1\n" + filler + b"G1 X20 E2\n"
+        calls = []
+        geometry.parse_gcode(data, progress=lambda done, total: calls.append((done, total)))
+        assert len(calls) == len(list(geometry.line_chunks(data))) > 1
+        assert all(total == len(data) for done, total in calls)
+        assert [done for done, total in calls] == sorted(done for done, total in calls)
+        assert calls[-1][0] == len(data)
