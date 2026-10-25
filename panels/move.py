@@ -1,3 +1,4 @@
+import configparser
 import logging
 import re
 
@@ -8,6 +9,14 @@ from gi.repository import Gtk
 
 from ks_includes.KlippyGcodes import KlippyGcodes
 from ks_includes.screen_panel import ScreenPanel
+
+
+def force_move_enabled(force_move_section):
+    # The configfile values are the raw strings, Klipper parses them with configparser
+    if not force_move_section:
+        return False
+    value = force_move_section.get("enable_force_move", "False").lower()
+    return configparser.RawConfigParser.BOOLEAN_STATES.get(value, False)
 
 
 class Panel(ScreenPanel):
@@ -283,11 +292,55 @@ class Panel(ScreenPanel):
         )
         if speed is None:
             speed = self._config.get_config()["main"].getint(config_key, self.max_z_velocity)
-        speed = 60 * max(1, speed)
-        script = f"{KlippyGcodes.MOVE_RELATIVE}\nG0 {axis}{dist} F{speed}"
+        speed = max(1, speed)
+        if self.can_force_move(axis):
+            self.force_move(widget, axis, dist, speed)
+            return
+        script = f"{KlippyGcodes.MOVE_RELATIVE}\nG0 {axis}{dist} F{60 * speed}"
         self._screen._send_action(widget, "printer.gcode.script", {"script": script})
         if self._printer.get_stat("gcode_move", "absolute_coordinates"):
             self._screen._ws.api.gcode_script("G90")
+
+    def can_force_move(self, axis):
+        # FORCE_MOVE neither checks nor updates the toolhead position, so only an
+        # unhomed axis may use it, and only where it moves the one stepper of that axis
+        return (
+            axis not in self._printer.get_stat("toolhead", "homed_axes")
+            and force_move_enabled(self._printer.get_config_section("force_move"))
+            and self._printer.get_config_section("printer")["kinematics"] == "cartesian"
+            and not self.has_second_stepper(axis)
+        )
+
+    def has_second_stepper(self, axis):
+        dual_carriage = self._printer.get_config_section("dual_carriage") or {}
+        return (
+            self._printer.config_section_exists(f"stepper_{axis}1")
+            or dual_carriage.get("axis") == axis
+        )
+
+    def force_move(self, widget, axis, dist, speed):
+        # Klipper queues a command sent while another one runs, so a move sent during
+        # G28 would run after the axis is homed, at a position Klipper no longer tracks
+        if self._printer.get_stat("idle_timeout", "state") == "Printing":
+            self._screen.show_popup_message(_("Printer busy, unhomed move not sent"), level=2)
+            return
+        max_velocity, accel = self.force_move_limits(axis)
+        script = (
+            f"FORCE_MOVE STEPPER=stepper_{axis} DISTANCE={dist} "
+            f"VELOCITY={min(speed, max_velocity)} ACCEL={accel}"
+        )
+        self._screen._send_action(widget, "printer.gcode.script", {"script": script})
+
+    def force_move_limits(self, axis):
+        if axis != "z":
+            toolhead = self._printer.get_stat("toolhead")
+            return toolhead["max_velocity"], toolhead["max_accel"]
+        # Klipper defaults max_z_velocity and max_z_accel to max_velocity and max_accel
+        printer_cfg = self._printer.get_config_section("printer")
+        return (
+            float(printer_cfg.get("max_z_velocity", printer_cfg["max_velocity"])),
+            float(printer_cfg.get("max_z_accel", printer_cfg["max_accel"])),
+        )
 
     def home(self, widget):
         if "delta" in self._printer.get_config_section("printer")["kinematics"]:
