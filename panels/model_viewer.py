@@ -1,0 +1,197 @@
+import logging
+import os
+import threading
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+from gi.repository import GLib, Gtk, Pango
+
+from ks_includes import model_geometry
+from ks_includes.files import KlippyFiles
+from ks_includes.screen_panel import ScreenPanel
+from ks_includes.widgets.model_view import ModelView
+
+DOWNLOAD_TIMEOUT = 30
+# Parsing a large G-code file keeps a core busy for seconds.
+# A higher niceness lets Klipper go first.
+WORKER_NICENESS = 10
+
+
+def lower_thread_priority():
+    try:
+        os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), WORKER_NICENESS)
+    except (AttributeError, OSError) as error:
+        logging.debug(f"Unable to lower the model loading priority: {error}")
+
+
+def parse_model(path, data, bed, cancelled):
+    if KlippyFiles.is_stl(path):
+        return model_geometry.parse_stl(data, model_geometry.bed_center(bed))
+    return model_geometry.parse_gcode(data, cancelled)
+
+
+def layer_text(layer, count, height):
+    return f"{_('Layer:')}\n{layer}/{count}\n{height:.2f} {_('mm')}"
+
+
+class Panel(ScreenPanel):
+    """3D view of the STL or G-code file passed as extra.
+
+    The model is freed when the panel leaves the screen.
+    """
+
+    def __init__(self, screen, title, **kwargs):
+        super().__init__(screen, title)
+        self.path = None
+        # show_panel can run __init__ again on this instance while a worker from before still
+        # runs, so the load generation must not start over.
+        self.generation = getattr(self, "generation", 0)
+        self.cancel_event = threading.Event()
+        self.view = ModelView()
+        self.view.connect_after("realize", self.on_view_realized)
+        # GtkOverlay gives a wrapping label at least its height at one character per line, and
+        # with the default fill alignment the text sinks below the view. Centred, it stays visible.
+        self.status = Gtk.Label(
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+            justify=Gtk.Justification.CENTER,
+            valign=Gtk.Align.CENTER,
+        )
+        self.status.set_no_show_all(True)
+        self.layer_label = Gtk.Label(justify=Gtk.Justification.CENTER)
+        self.layer_scale = self.create_layer_scale()
+        self.slider_box = self.create_slider_box()
+        self.content.add(self.create_layout())
+
+    def create_layer_scale(self):
+        """Beside the view in landscape, top layer at the top. Below the view in vertical mode."""
+        upright = not self._screen.vertical_mode
+        scale = Gtk.Scale(
+            orientation=Gtk.Orientation.VERTICAL if upright else Gtk.Orientation.HORIZONTAL,
+            inverted=upright,
+            draw_value=False,
+            digits=0,
+            vexpand=upright,
+            hexpand=not upright,
+        )
+        scale.connect("value-changed", self.on_layer_changed)
+        return scale
+
+    def create_slider_box(self):
+        orientation = (
+            Gtk.Orientation.HORIZONTAL if self._screen.vertical_mode else Gtk.Orientation.VERTICAL
+        )
+        box = Gtk.Box(orientation=orientation, spacing=5)
+        box.pack_start(self.layer_label, False, False, 5)
+        box.pack_start(self.layer_scale, True, True, 0)
+        box.show_all()
+        box.set_no_show_all(True)
+        box.hide()
+        return box
+
+    def create_layout(self):
+        overlay = Gtk.Overlay()
+        overlay.add(self.view)
+        overlay.add_overlay(self.status)
+        orientation = (
+            Gtk.Orientation.VERTICAL if self._screen.vertical_mode else Gtk.Orientation.HORIZONTAL
+        )
+        layout = Gtk.Box(orientation=orientation, spacing=5)
+        layout.pack_start(overlay, True, True, 0)
+        layout.pack_start(self.slider_box, False, False, 0)
+        return layout
+
+    def set_extra(self, extra=None, **kwargs):
+        """Called by show_panel before activate, also when the cached panel shows another file."""
+        self.path = extra
+        self.title = os.path.basename(extra or "")
+
+    def activate(self):
+        if self.view.failure is not None:
+            self.show_status(self.view.failure)
+        elif self.path:
+            self.start_loading()
+
+    def on_view_realized(self, view):
+        """Without OpenGL the view stays empty, so show why instead of loading."""
+        if view.failure is not None:
+            self.generation += 1
+            self.cancel_event.set()
+            self.show_failure(self.generation, view.failure)
+
+    def deactivate(self):
+        self.generation += 1
+        self.cancel_event.set()
+        self.view.clear()
+        self.slider_box.hide()
+
+    def bed_bounds(self):
+        return model_geometry.bed_bounds(
+            self._printer.get_stat("toolhead", "axis_minimum"),
+            self._printer.get_stat("toolhead", "axis_maximum"),
+        )
+
+    def show_status(self, text):
+        self.status.set_text(text)
+        self.status.show()
+
+    def start_loading(self):
+        self.generation += 1
+        self.cancel_event = threading.Event()
+        self.show_status(_("Loading..."))
+        arguments = (self.generation, self.path, self.bed_bounds(), self.cancel_event)
+        threading.Thread(target=self.load, args=arguments, daemon=True).start()
+
+    def load(self, generation, path, bed, cancel_event):
+        """Worker thread: download and parse, then hand the result to the main loop."""
+        lower_thread_priority()
+        data = self._screen.files.download(path, timeout=DOWNLOAD_TIMEOUT)
+        if data is None:
+            GLib.idle_add(self.show_failure, generation, _("Error loading file"))
+            return
+        try:
+            model = parse_model(path, data, bed, cancel_event.is_set)
+        except model_geometry.Cancelled:
+            return
+        except Exception as error:
+            logging.exception(f"Unable to show {path}")
+            GLib.idle_add(
+                self.show_failure, generation, f"{_('Unable to show this file')}\n{error}"
+            )
+            return
+        GLib.idle_add(self.show_loaded, generation, model, bed)
+
+    def show_failure(self, generation, text):
+        if generation == self.generation:
+            self.show_status(text)
+        return False
+
+    def show_loaded(self, generation, model, bed):
+        if generation != self.generation:
+            return False
+        self.status.hide()
+        self.view.show_model(model, bed)
+        self.setup_layer_slider(model)
+        return False
+
+    def setup_layer_slider(self, model):
+        count = len(model.layer_ends) if isinstance(model, model_geometry.Toolpath) else 0
+        if count < 2:
+            self.slider_box.hide()
+            return
+        self.layer_scale.set_range(1, count)
+        self.layer_scale.set_increments(1, 10)
+        self.layer_scale.set_value(count)
+        self.on_layer_changed(self.layer_scale)
+        self.slider_box.show()
+
+    def on_layer_changed(self, scale):
+        model = self.view.model
+        if not isinstance(model, model_geometry.Toolpath):
+            return
+        layer = int(scale.get_value())
+        self.view.set_top_layer(layer)
+        self.layer_label.set_text(
+            layer_text(layer, len(model.layer_ends), model.layer_heights[layer - 1])
+        )
