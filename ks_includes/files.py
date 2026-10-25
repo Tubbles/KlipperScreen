@@ -1,5 +1,6 @@
 import logging
 import os
+from urllib.parse import quote
 
 import gi
 
@@ -85,12 +86,7 @@ class KlippyFiles:
         logging.info(f"callback not found {callback}")
 
     def process_update(self, data):
-        if (
-            "item" in data
-            and data["item"]["root"] != "gcodes"
-            or data["action"].endswith("file")
-            and not self.is_gcode(data["item"]["path"])
-        ):
+        if "item" in data and data["item"]["root"] != "gcodes":
             return
         if data["action"] == "create_file":
             self.add_file(data["item"])
@@ -110,6 +106,37 @@ class KlippyFiles:
     @staticmethod
     def is_gcode(path):
         return os.path.splitext(path)[1] in {".gcode", ".gco", ".g"}
+
+    @staticmethod
+    def is_text(path):
+        return os.path.splitext(path)[1] in {
+            ".txt",
+            ".cfg",
+            ".conf",
+            ".log",
+            ".md",
+            ".csv",
+            ".sh",
+            ".json",
+            ".xml",
+            ".yaml",
+            ".yml",
+        }
+
+    def download(self, path, timeout=4):
+        """Bytes of a file in the gcodes root, or None. Blocks until the transfer ends."""
+        import requests
+
+        url = f"{self._screen.moonraker_endpoint}/server/files/gcodes/{quote(path)}"
+        api_key = self._screen.moonraker_api_key
+        headers = {"x-api-key": api_key} if api_key else {}
+        try:
+            response = requests.get(url, headers=headers, timeout=timeout)
+            response.raise_for_status()
+        except Exception as e:
+            logging.error(f"Failed to download {path}: {e}")
+            return None
+        return response.content
 
     def file_metadata_exists(self, filename):
         return filename in self.files and "slicer" in self.files[filename]

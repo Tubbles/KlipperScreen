@@ -1,3 +1,4 @@
+import codecs
 import logging
 import os
 
@@ -6,8 +7,9 @@ import gi
 gi.require_version("Gtk", "3.0")
 from datetime import datetime
 
-from gi.repository import Gtk, Pango
+from gi.repository import GLib, Gtk, Pango
 
+from ks_includes.files import KlippyFiles
 from ks_includes.KlippyGtk import find_widget
 from ks_includes.screen_panel import ScreenPanel
 from ks_includes.widgets.flowboxchild_extended import PrintListItem
@@ -20,6 +22,18 @@ def format_label(widget):
         label.set_line_wrap(True)
         label.set_ellipsize(Pango.EllipsizeMode.END)
         label.set_lines(3)
+
+
+def decode_text(data, truncated):
+    """Text of a file as UTF-8, else latin-1.
+
+    A truncated file may end inside a UTF-8 character, which is dropped instead of making the whole
+    file fall back to latin-1.
+    """
+    try:
+        return codecs.getincrementaldecoder("utf-8")().decode(data, final=not truncated)
+    except UnicodeDecodeError:
+        return data.decode("latin-1")
 
 
 class Panel(ScreenPanel):
@@ -136,21 +150,18 @@ class Panel(ScreenPanel):
             if name.startswith("."):
                 return None
             path = f"{self.cur_directory}/{name}"
-            basename = name
             fbchild.set_as_dir(True)
         elif is_file:
             name = item["filename"]
             if name.startswith("."):
                 return None
-            basename, ext = os.path.splitext(name)
-            if ext not in {".gcode", ".gco", ".g"}:
-                return None
             path = f"{self.cur_directory}/{name}".replace("gcodes/", "")
         else:
             logging.error(f"Unknown item {item}")
             return None
+        is_gcode = is_file and KlippyFiles.is_gcode(name)
         fbchild.set_path(path)
-        fbchild.set_name(basename.casefold())
+        fbchild.set_name(name.casefold())
         if self.list_mode:
             info = Gtk.Label(
                 hexpand=True,
@@ -177,7 +188,7 @@ class Panel(ScreenPanel):
                 hexpand=True, halign=Gtk.Align.START, ellipsize=Pango.EllipsizeMode.END
             )
             itemname.get_style_context().add_class("print-filename")
-            itemname.set_markup(f"<big><b>{basename}</b></big>")
+            itemname.set_markup(f"<big><b>{GLib.markup_escape_text(name)}</b></big>")
             icon = Gtk.Button()
             row = Gtk.Grid(hexpand=True, vexpand=False, valign=Gtk.Align.CENTER)
             row.get_style_context().add_class("frame-item")
@@ -187,7 +198,7 @@ class Panel(ScreenPanel):
             row.attach(info, 1, 1, 1, 1)
             row.attach(rename, 2, 1, 1, 1)
             row.attach(delete, 3, 1, 1, 1)
-            if is_file:
+            if is_gcode:
                 icon.connect("clicked", self.confirm_print, path)
                 self.image_load(path, icon, self.thumbsize / 2, True, "file")
                 delete.connect("clicked", self.confirm_delete_file, f"gcodes/{path}")
@@ -203,6 +214,14 @@ class Panel(ScreenPanel):
                 else:
                     icon.get_style_context().add_class("color3")
                     row.attach(icon, 4, 0, 1, 2)
+            elif is_file:
+                icon.connect("clicked", self.open_file, path, item)
+                self.image_load(None, icon, self.thumbsize / 2, True, "file")
+                delete.connect("clicked", self.confirm_delete_file, f"gcodes/{path}")
+                rename.connect("clicked", self.show_rename, f"gcodes/{path}")
+                if self._screen.width < 400:
+                    icon.get_style_context().add_class("color3")
+                    row.attach(icon, 4, 0, 1, 2)
             elif is_dir:
                 icon.connect("clicked", self.change_dir, path)
                 self.image_load(None, icon, self.thumbsize / 2, True, "folder")
@@ -216,10 +235,13 @@ class Panel(ScreenPanel):
                 row.attach(action, 4, 0, 1, 2)
             fbchild.add(row)
         else:  # Thumbnail view
-            icon = self._gtk.Button(label=basename)
-            if is_file:
+            icon = self._gtk.Button(label=name)
+            if is_gcode:
                 icon.connect("clicked", self.confirm_print, path)
                 self.image_load(path, icon, self.thumbsize, False, "file")
+            elif is_file:
+                icon.connect("clicked", self.open_file, path, item)
+                self.image_load(None, icon, self.thumbsize, False, "file")
             elif is_dir:
                 icon.connect("clicked", self.change_dir, path)
                 self.image_load(None, icon, self.thumbsize, False, "folder")
@@ -424,6 +446,69 @@ class Panel(ScreenPanel):
             self._screen._ws.api.print_start(filename)
         elif response_id == Gtk.ResponseType.REJECT:
             self.confirm_delete_file(None, f"gcodes/{filename}")
+
+    def open_file(self, widget, path, item):
+        name = os.path.basename(path)
+        if KlippyFiles.is_text(name):
+            self.show_text_file(name, path)
+        else:
+            self.show_file_info(name, item)
+
+    def show_text_file(self, name, path):
+        max_size = 1024 * 1024
+        response = self._screen.files.download(path)
+        if response is None:
+            text = _("Error loading file")
+        else:
+            truncated = len(response) > max_size
+            text = decode_text(response[:max_size], truncated)
+            if truncated:
+                text += f"\n\n[{_('File truncated')}: 1 MB {_('limit')}]"
+
+        buffer = Gtk.TextBuffer()
+        buffer.set_text(text)
+        view = Gtk.TextView(
+            buffer=buffer,
+            editable=False,
+            cursor_visible=False,
+            monospace=True,
+            wrap_mode=Gtk.WrapMode.WORD_CHAR,
+        )
+        scroll = Gtk.ScrolledWindow(hexpand=True, vexpand=True)
+        scroll.add(view)
+        buttons = [
+            {"name": _("Close"), "response": Gtk.ResponseType.CANCEL, "style": "dialog-secondary"},
+        ]
+        self._gtk.Dialog(name, buttons, scroll, self.close_file_dialog)
+
+    def show_file_info(self, name, item):
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=10,
+            halign=Gtk.Align.CENTER,
+            valign=Gtk.Align.CENTER,
+            vexpand=True,
+            hexpand=True,
+        )
+        name_label = Gtk.Label(wrap=True)
+        name_label.set_markup(f"<big><b>{GLib.markup_escape_text(name)}</b></big>")
+        box.add(name_label)
+        if "size" in item:
+            box.add(Gtk.Label(label=f"{_('Size')}: {self.format_size(item['size'])}"))
+        if "modified" in item:
+            time_format = "%Y/%m/%d %H:%M" if self.time_24 else "%Y/%m/%d %I:%M %p"
+            modified = datetime.fromtimestamp(item["modified"]).strftime(time_format)
+            box.add(Gtk.Label(label=f"{_('Modified')}: {modified}"))
+        extension = os.path.splitext(name)[1]
+        if extension:
+            box.add(Gtk.Label(label=f"{_('Type')}: {extension}"))
+        buttons = [
+            {"name": _("Close"), "response": Gtk.ResponseType.CANCEL, "style": "dialog-secondary"},
+        ]
+        self._gtk.Dialog(name, buttons, box, self.close_file_dialog)
+
+    def close_file_dialog(self, dialog, response_id):
+        self._gtk.remove_dialog(dialog)
 
     def get_info_str(self, item, path):
         info = ""
