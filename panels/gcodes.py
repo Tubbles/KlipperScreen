@@ -56,6 +56,7 @@ class Panel(ScreenPanel):
         self.showing_rename = False
         self.loading = False
         self.cur_directory = "gcodes"
+        self.returning_from_viewer = False
         self.list_button_size = self._gtk.img_scale * self.bts
 
         self.headerbox = Gtk.Box(hexpand=True, vexpand=False)
@@ -138,11 +139,14 @@ class Panel(ScreenPanel):
         self._refresh_files()
 
     def activate(self):
-        if self.cur_directory != "gcodes":
+        if self.returning_from_viewer:
+            self.returning_from_viewer = False
+        elif self.cur_directory != "gcodes":
             self.change_dir()
         self._screen.files.add_callback(self._callback)
 
     def deactivate(self):
+        self.returning_from_viewer = False
         self._screen.files.remove_callback(self._callback)
 
     def create_item(self, item):
@@ -372,6 +376,7 @@ class Panel(ScreenPanel):
 
         buttons = [
             {"name": _("Delete"), "response": Gtk.ResponseType.REJECT, "style": "dialog-error"},
+            {"name": _("Preview"), "response": Gtk.ResponseType.APPLY, "style": "dialog-info"},
             {"name": action, "response": Gtk.ResponseType.OK, "style": "dialog-primary"},
             {"name": _("Cancel"), "response": Gtk.ResponseType.CANCEL, "style": "dialog-secondary"},
         ]
@@ -452,10 +457,20 @@ class Panel(ScreenPanel):
             self._screen._ws.api.print_start(filename)
         elif response_id == Gtk.ResponseType.REJECT:
             self.confirm_delete_file(None, f"gcodes/{filename}")
+        elif response_id == Gtk.ResponseType.APPLY:
+            self.show_model_viewer(filename)
+
+    def show_model_viewer(self, path):
+        self._screen.show_panel("model_viewer", os.path.basename(path), extra=path)
+        # show_panel has deactivated this panel by now. Back from the viewer keeps the folder,
+        # Home clears the flag through deactivate.
+        self.returning_from_viewer = True
 
     def open_file(self, widget, path, item):
         name = os.path.basename(path)
-        if KlippyFiles.is_text(name):
+        if KlippyFiles.is_stl(name):
+            self.show_model_viewer(path)
+        elif KlippyFiles.is_text(name):
             self.show_text_file(name, path)
         else:
             self.show_file_info(name, item)

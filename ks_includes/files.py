@@ -108,6 +108,10 @@ class KlippyFiles:
         return os.path.splitext(path)[1] in {".gcode", ".gco", ".g"}
 
     @staticmethod
+    def is_stl(path):
+        return os.path.splitext(path)[1].lower() == ".stl"
+
+    @staticmethod
     def is_text(path):
         return os.path.splitext(path)[1] in {
             ".txt",

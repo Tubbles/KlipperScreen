@@ -78,6 +78,8 @@ panel: move
 ```
 ![Move Panel](img/panels/move.png)
 
+### [Model Viewer](Panels/Model_viewer.md)
+
 ### Network
 ```py
 panel: network
