@@ -39,6 +39,7 @@ nav:
     - Panels:
       - Bed Level/Screws: Panels/Screws.md
       - Job_status/Printing: Panels/Job_status.md
+      - Model Viewer: Panels/Model_viewer.md
       - Temperature: Panels/Temperature.md
       - Z Calibrate: Panels/Zcalibrate.md
     - Theming.md
