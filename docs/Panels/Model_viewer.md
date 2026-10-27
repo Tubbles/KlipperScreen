@@ -7,13 +7,17 @@ Shows STL and G-code files from the file browser in 3D, inside the normal screen
 
 The back button closes the viewer and frees the model.
 
-## Gestures
+## Controls
 
-| Gesture             | Action |
-|---------------------|--------|
-| One finger drag     | Orbit  |
-| Two finger drag     | Pan    |
-| Pinch               | Zoom   |
+| Control                     | Action |
+|-----------------------------|--------|
+| One finger drag             | Orbit, or pan while **Pan** is on |
+| **Zoom in**, **Zoom out**   | Zoom one step |
+| **Pan**                     | Switch the one finger drag between orbit and pan. Highlighted while on |
+| Two finger drag             | Pan, where the system delivers multi-touch |
+| Pinch                       | Zoom, where the system delivers multi-touch |
+
+The buttons sit below the view on a portrait screen and beside it in landscape. Pan is off whenever the viewer opens.
 
 ## STL
 
@@ -42,3 +46,4 @@ When the limits are not available, the outline follows the model.
 * Arcs (G2, G3) are drawn as a straight line from start to end.
 * Large G-code files take a while to load: about 11 seconds for a 49 MB file on a Raspberry Pi 4. A progress bar shows how far parsing has come.
 * Only tested on X11.
+* On Raspberry Pi OS with X11, GTK receives the first finger as a mouse and never sees the second, so pinch and two finger drag do nothing there and the buttons take their place.

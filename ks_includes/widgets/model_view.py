@@ -1,4 +1,9 @@
-"""OpenGL view of an STL mesh or G-code toolpath with touch orbit, pan and pinch zoom.
+"""OpenGL view of an STL mesh or G-code toolpath that orbits, pans and zooms.
+
+A one finger drag orbits, or pans while drag_pans is set, and zoom_by zooms in steps. The panel
+drives both with on-screen buttons. Two fingers pan and pinch zoom only where GTK delivers touch
+events. Raspberry Pi OS's GTK on X11 does not: the first finger arrives as the mouse and the
+second is lost.
 
 Needs an OpenGL 3.1 context (GLSL 1.40). GL objects live between the realize and unrealize
 signals. The CPU copy of the model stays until clear(), so the view can re-upload it whenever
@@ -244,6 +249,8 @@ class ModelView(Gtk.GLArea):
         self.buffers = {}
         self.needs_upload = False
         self.drag_offset = (0.0, 0.0)
+        # Set by the panel's pan toggle.
+        self.drag_pans = False
         self.pinch_camera = None
         self.pinch_center = (0.0, 0.0)
         self.connect("realize", self.on_realize)
@@ -279,6 +286,13 @@ class ModelView(Gtk.GLArea):
 
     def set_top_layer(self, layer):
         self.top_layer = layer
+        self.queue_render()
+
+    def zoom_by(self, scale):
+        """Zoom like a pinch of this scale: above 1 moves closer."""
+        if self.camera is None:
+            return
+        self.camera = orbit_camera.zoom(self.camera, scale)
         self.queue_render()
 
     def on_realize(self, area):
@@ -391,16 +405,17 @@ class ModelView(Gtk.GLArea):
         self.drag_offset = (0.0, 0.0)
 
     def on_drag_update(self, gesture, offset_x, offset_y):
-        """One finger orbits."""
+        """One finger orbits, or pans while drag_pans is set."""
         if self.camera is None:
             return
         delta_x, delta_y = offset_x - self.drag_offset[0], offset_y - self.drag_offset[1]
         self.drag_offset = (offset_x, offset_y)
-        self.camera = orbit_camera.orbit(self.camera, delta_x, delta_y, self.viewport_size()[1])
+        move = orbit_camera.pan if self.drag_pans else orbit_camera.orbit
+        self.camera = move(self.camera, delta_x, delta_y, self.viewport_size()[1])
         self.queue_render()
 
     def on_pinch_begin(self, gesture, sequence):
-        """Claiming both touches cancels the one finger orbit that the first touch started."""
+        """Claiming both touches cancels the one finger drag that the first touch started."""
         gesture.set_state(Gtk.EventSequenceState.CLAIMED)
         self.pinch_camera = self.camera
         self.pinch_center = gesture.get_bounding_box_center()[1:]
