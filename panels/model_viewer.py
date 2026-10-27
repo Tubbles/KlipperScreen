@@ -20,6 +20,8 @@ DOWNLOAD_TIMEOUT = 30
 WORKER_NICENESS = 10
 # Seconds between parsing progress updates sent to the main loop.
 PROGRESS_INTERVAL = 0.2
+# Zoom of one tap on a zoom button, as a pinch scale.
+ZOOM_STEP = 1.25
 
 
 def lower_thread_priority():
@@ -58,6 +60,13 @@ def layer_text(layer, count, height):
     return f"{_('Layer:')}\n{layer}/{count}\n{height:.2f} {_('mm')}"
 
 
+def set_style_class(widget, name, enabled):
+    if enabled:
+        widget.get_style_context().add_class(name)
+    else:
+        widget.get_style_context().remove_class(name)
+
+
 class Panel(ScreenPanel):
     """3D view of the STL or G-code file passed as extra.
 
@@ -89,6 +98,8 @@ class Panel(ScreenPanel):
         self.layer_label = Gtk.Label(justify=Gtk.Justification.CENTER)
         self.layer_scale = self.create_layer_scale()
         self.slider_box = self.create_slider_box()
+        self.pan_button = self.create_pan_button()
+        self.controls = self.create_controls()
         self.content.add(self.create_layout())
 
     def create_layer_scale(self):
@@ -117,6 +128,47 @@ class Panel(ScreenPanel):
         box.hide()
         return box
 
+    def create_controls(self):
+        """Zoom buttons and the pan toggle. A row below the view in vertical mode, else a column."""
+        vertical = self._screen.vertical_mode
+        zoom_out = self._gtk.Button(
+            "decrease", " " + _("Zoom out"), "color3", self.bts, Gtk.PositionType.LEFT, 1
+        )
+        zoom_out.connect("clicked", self.on_zoom, 1 / ZOOM_STEP)
+        zoom_in = self._gtk.Button(
+            "increase", " " + _("Zoom in"), "color1", self.bts, Gtk.PositionType.LEFT, 1
+        )
+        zoom_in.connect("clicked", self.on_zoom, ZOOM_STEP)
+        # Alone in its box the toggle is first and last child, so it gets both rounded ends
+        pan_box = Gtk.Box()
+        pan_box.add(self.pan_button)
+        # The buttons expand both ways, the box must not take space from the view
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL if vertical else Gtk.Orientation.VERTICAL,
+            spacing=5,
+            homogeneous=True,
+            hexpand=False,
+            vexpand=False,
+            valign=Gtk.Align.FILL if vertical else Gtk.Align.START,
+        )
+        for widget in (zoom_out, zoom_in, pan_box):
+            box.add(widget)
+        box.show_all()
+        box.set_no_show_all(True)
+        box.hide()
+        return box
+
+    def create_pan_button(self):
+        """A toggle in KlipperScreen's toggle button style, filled while a drag pans."""
+        button = self._gtk.Button("move", " " + _("Pan"), None, self.bts, Gtk.PositionType.LEFT, 1)
+        # The toggle style has no vertical margin, so filling the row it would stand taller than
+        # the zoom buttons
+        button.set_valign(Gtk.Align.CENTER)
+        button.get_style_context().add_class("horizontal_togglebuttons")
+        button.get_style_context().add_class("horizontal_togglebuttons_smaller")
+        button.connect("clicked", self.on_pan_clicked)
+        return button
+
     def create_loading_box(self):
         box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
@@ -142,6 +194,7 @@ class Panel(ScreenPanel):
         layout = Gtk.Box(orientation=orientation, spacing=5)
         layout.pack_start(overlay, True, True, 0)
         layout.pack_start(self.slider_box, False, False, 0)
+        layout.pack_start(self.controls, False, False, 0)
         return layout
 
     def set_extra(self, extra=None, **kwargs):
@@ -168,6 +221,8 @@ class Panel(ScreenPanel):
         self.view.clear()
         self.hide_loading()
         self.slider_box.hide()
+        self.controls.hide()
+        self.set_panning(False)
 
     def bed_bounds(self):
         return model_geometry.bed_bounds(
@@ -240,7 +295,18 @@ class Panel(ScreenPanel):
         self.hide_loading()
         self.view.show_model(model, bed)
         self.setup_layer_slider(model)
+        self.controls.show()
         return False
+
+    def on_zoom(self, button, scale):
+        self.view.zoom_by(scale)
+
+    def on_pan_clicked(self, button):
+        self.set_panning(not self.view.drag_pans)
+
+    def set_panning(self, active):
+        self.view.drag_pans = active
+        set_style_class(self.pan_button, "horizontal_togglebuttons_active", active)
 
     def setup_layer_slider(self, model):
         count = len(model.layer_ends) if isinstance(model, model_geometry.Toolpath) else 0
