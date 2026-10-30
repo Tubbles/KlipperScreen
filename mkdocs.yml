@@ -38,6 +38,7 @@ nav:
     - Screenshots: Panels.md
     - Panels:
       - Bed Level/Screws: Panels/Screws.md
+      - GitHub: Panels/GitHub.md
       - Job_status/Printing: Panels/Job_status.md
       - Model Viewer: Panels/Model_viewer.md
       - Temperature: Panels/Temperature.md

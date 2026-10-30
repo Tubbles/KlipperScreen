@@ -57,6 +57,8 @@ panel: gcode_macros
 ```
 ![Gcode Macros Panel](img/panels/gcode_macros.png)
 
+### [GitHub](Panels/GitHub.md)
+
 ### Input Shapers
 ```py
 panel: input_shaper
