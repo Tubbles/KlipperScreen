@@ -1,0 +1,20 @@
+name: Run Tests
+on:
+  push:
+    paths-ignore:
+      - 'docs/**'
+      - 'ks_includes/locales/**'
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - 'ks_includes/locales/**'
+jobs:
+  test-python-code:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: pip install numpy pytest
+      - run: python -m pytest
